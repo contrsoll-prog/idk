@@ -92,19 +92,11 @@ def check_admin_or_owner_user(member: discord.Member) -> bool:
     author_role_ids = [role.id for role in member.roles]
     return any(role_id in ADMIN_ROLE_IDS for role_id in author_role_ids)
 
-def is_admin_or_owner():
-    async def predicate(ctx):
-        if check_admin_or_owner_user(ctx.author):
-            return True
-        raise commands.CheckFailure("❌ هذا الأمر مخصص للإدارة والمالك فقط!")
-    return commands.check(predicate)
-
 # --------------------------------------------------
 # 2. قاعدة البيانات وتدريج صعوبة الـ XP
 # --------------------------------------------------
 async def init_db():
     async with aiosqlite.connect("leveling.db") as db:
-        # إنشاء الجداول الأساسية
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -124,7 +116,6 @@ async def init_db():
             )
         """)
 
-        # فحص الأعمدة المفقودة وإضافتها آلياً لمنع أخطاء OperationalError
         async with db.execute("PRAGMA table_info(users)") as cursor:
             columns = [column[1] for column in await cursor.fetchall()]
             if "voice_xp" not in columns:
@@ -136,7 +127,6 @@ async def init_db():
 
         await db.commit()
 
-# حساب الـ XP المطلوب بقانون صعوبة متدرج ومنطقي
 def get_needed_xp(level: int) -> int:
     return int(100 + (15 * level) + (5 * (level ** 1.5)))
 
@@ -156,7 +146,7 @@ async def log_xp_gain(user_id: int, amount: int):
         await db.commit()
 
 # --------------------------------------------------
-# 3. صانع بطاقة Rank Card
+# 3. صانع بطاقة Rank Card (بأحجام خطوط كبيرة ومضمونة)
 # --------------------------------------------------
 async def generate_dual_rank_card(
     member: discord.Member,
@@ -167,10 +157,10 @@ async def generate_dual_rank_card(
     text_lvl, text_xp, text_needed, text_rank, text_total = text_data
     voice_lvl, voice_xp, voice_needed, voice_rank, voice_total = voice_data
 
-    width, height = 850, 320
+    width, height = 900, 360
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
 
-    bg = Image.new("RGBA", (width, height), (22, 22, 29, 240))
+    bg = Image.new("RGBA", (width, height), (22, 22, 29, 245))
     bg_mask = Image.new("L", (width, height), 0)
     ImageDraw.Draw(bg_mask).rounded_rectangle(
         [(0, 0), (width, height)], radius=25, fill=255
@@ -181,78 +171,78 @@ async def generate_dual_rank_card(
 
     wave_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     wave_draw = ImageDraw.Draw(wave_overlay)
-    wave_draw.ellipse([(250, -50), (950, 450)], fill=(108, 63, 196, 120))
-    wave_draw.ellipse([(400, 100), (900, 500)], fill=(75, 45, 145, 160))
+    wave_draw.ellipse([(250, -50), (1000, 500)], fill=(108, 63, 196, 120))
+    wave_draw.ellipse([(420, 100), (950, 550)], fill=(75, 45, 145, 160))
     image.paste(wave_overlay, (0, 0), bg_mask)
 
     # صورة الشخصية
     try:
         avatar_bytes = await member.display_avatar.with_format("png").read()
-        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((190, 190))
-        mask = Image.new("L", (190, 190), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, 190, 190), fill=255)
-        draw.ellipse((35, 45, 235, 245), fill=(255, 255, 255, 255))
-        image.paste(avatar_img, (40, 50), mask)
+        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((200, 200))
+        mask = Image.new("L", (200, 200), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, 200, 200), fill=255)
+        draw.ellipse((30, 75, 240, 285), fill=(255, 255, 255, 255))
+        image.paste(avatar_img, (35, 80), mask)
     except Exception:
         pass
 
-    # صورة السيرفر المصغرة
-    if guild and guild.icon:
+    # تحميل الخطوط مع ضمان الحجم الكبير دون التراجع للخط الصغير القديم
+    def load_font(size):
+        for font_path in ["arial.ttf", "DejaVuSans.ttf", "FreeSans.ttf", "Ubuntu-R.ttf"]:
+            try:
+                return ImageFont.truetype(font_path, size)
+            except IOError:
+                continue
         try:
-            icon_bytes = await guild.icon.with_format("png").read()
-            icon_img = Image.open(io.BytesIO(icon_bytes)).convert("RGBA").resize((45, 45))
-            icon_mask = Image.new("L", (45, 45), 0)
-            ImageDraw.Draw(icon_mask).ellipse((0, 0, 45, 45), fill=255)
-            draw.ellipse((368, 18, 418, 68), fill=(255, 255, 255, 255))
-            image.paste(icon_img, (370, 20), icon_mask)
-        except Exception:
-            pass
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
 
-    try:
-        font_name = ImageFont.truetype("arial.ttf", 34)
-        font_lvl = ImageFont.truetype("arial.ttf", 36)
-        font_sub = ImageFont.truetype("arial.ttf", 18)
-        font_small = ImageFont.truetype("arial.ttf", 16)
-    except IOError:
-        font_name = font_lvl = font_sub = font_small = ImageFont.load_default()
+    font_name = load_font(42)
+    font_lvl = load_font(48)
+    font_sub = load_font(26)
+    font_small = load_font(22)
+    font_bar = load_font(24)
 
     display_name = member.display_name
-    if len(display_name) > 16:
-        display_name = display_name[:14] + ".."
-    draw.text((430, 22), display_name, fill=(255, 255, 255, 255), font=font_name)
+    if len(display_name) > 15:
+        display_name = display_name[:13] + ".."
+    draw.text((450, 20), display_name, fill=(255, 255, 255, 255), font=font_name)
 
-    # القسم الكتابي 💬
-    draw.text((320, 85), "LVL", fill=(200, 200, 220, 255), font=font_small)
-    draw.text((315, 105), str(text_lvl), fill=(255, 255, 255, 255), font=font_lvl)
+    # --- 1. القسم الكتابي 💬 ---
+    draw.text((275, 95), "LVL", fill=(180, 180, 210, 255), font=font_small)
+    draw.text((275, 120), str(text_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    draw.rectangle([(380, 105), (410, 125)], fill=(255, 255, 255, 255))
-    draw.polygon([(385, 125), (385, 133), (393, 125)], fill=(255, 255, 255, 255))
+    # أيقونة الشات
+    draw.rounded_rectangle([(345, 120), (385, 150)], radius=6, fill=(255, 255, 255, 255))
+    draw.polygon([(350, 150), (350, 162), (362, 150)], fill=(255, 255, 255, 255))
 
-    draw.text((440, 95), f"Rank: #{text_rank}", fill=(210, 210, 230, 255), font=font_sub)
-    draw.text((680, 95), f"Total: {format_number(text_total)}", fill=(210, 210, 230, 255), font=font_sub)
+    draw.text((450, 95), f"Rank: #{text_rank}", fill=(230, 230, 245, 255), font=font_sub)
+    draw.text((700, 95), f"Total: {format_number(text_total)}", fill=(230, 230, 245, 255), font=font_sub)
 
-    bx, by, bw, bh = 440, 122, 370, 28
-    draw.rounded_rectangle([(bx, by), (bx + bw, by + bh)], radius=14, fill=(40, 42, 54, 230))
+    bx, by, bw, bh = 450, 132, 410, 36
+    draw.rounded_rectangle([(bx, by), (bx + bw, by + bh)], radius=18, fill=(40, 42, 54, 230))
     prog_text = max(0.02, min(1.0, text_xp / text_needed)) if text_needed > 0 else 0.02
-    draw.rounded_rectangle([(bx, by), (bx + int(bw * prog_text), by + bh)], radius=14, fill=(108, 100, 115, 255))
-    draw.text((bx + 110, by + 3), f"{text_xp} / {text_needed}", fill=(255, 255, 255, 255), font=font_sub)
+    draw.rounded_rectangle([(bx, by), (bx + int(bw * prog_text), by + bh)], radius=18, fill=(138, 90, 225, 255))
+    draw.text((bx + 130, by + 4), f"{text_xp} / {text_needed}", fill=(255, 255, 255, 255), font=font_bar)
 
-    # القسم الصوتي 🎤
-    draw.text((320, 185), "LVL", fill=(200, 200, 220, 255), font=font_small)
-    draw.text((320, 205), str(voice_lvl), fill=(255, 255, 255, 255), font=font_lvl)
+    # --- 2. القسم الصوتي 🎤 ---
+    draw.text((275, 215), "LVL", fill=(180, 180, 210, 255), font=font_small)
+    draw.text((275, 240), str(voice_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    draw.rounded_rectangle([(387, 203), (397, 222)], radius=5, fill=(255, 255, 255, 255))
-    draw.arc([(382, 210), (402, 225)], start=0, end=180, fill=(255, 255, 255, 255), width=2)
-    draw.line([(392, 225), (392, 230)], fill=(255, 255, 255, 255), width=2)
+    # أيقونة المايك
+    draw.rounded_rectangle([(357, 235), (373, 262)], radius=7, fill=(255, 255, 255, 255))
+    draw.arc([(350, 245), (380, 268)], start=0, end=180, fill=(255, 255, 255, 255), width=3)
+    draw.line([(365, 268), (365, 276)], fill=(255, 255, 255, 255), width=3)
 
-    draw.text((440, 195), f"Rank: #{voice_rank}", fill=(210, 210, 230, 255), font=font_sub)
-    draw.text((680, 195), f"Total: {format_number(voice_total)}", fill=(210, 210, 230, 255), font=font_sub)
+    draw.text((450, 215), f"Rank: #{voice_rank}", fill=(230, 230, 245, 255), font=font_sub)
+    draw.text((700, 215), f"Total: {format_number(voice_total)}", fill=(230, 230, 245, 255), font=font_sub)
 
-    by_v = 222
-    draw.rounded_rectangle([(bx, by_v), (bx + bw, by_v + bh)], radius=14, fill=(40, 42, 54, 230))
+    by_v = 252
+    draw.rounded_rectangle([(bx, by_v), (bx + bw, by_v + bh)], radius=18, fill=(40, 42, 54, 230))
     prog_voice = max(0.02, min(1.0, voice_xp / voice_needed)) if voice_needed > 0 else 0.02
-    draw.rounded_rectangle([(bx, by_v), (bx + int(bw * prog_voice), by_v + bh)], radius=14, fill=(108, 100, 115, 255))
-    draw.text((bx + 120, by_v + 3), f"{voice_xp} / {voice_needed}", fill=(255, 255, 255, 255), font=font_sub)
+    draw.rounded_rectangle([(bx, by_v), (bx + int(bw * prog_voice), by_v + bh)], radius=18, fill=(138, 90, 225, 255))
+    draw.text((bx + 130, by_v + 4), f"{voice_xp} / {voice_needed}", fill=(255, 255, 255, 255), font=font_bar)
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -260,13 +250,8 @@ async def generate_dual_rank_card(
     return buffer
 
 # --------------------------------------------------
-# 4. نظام تبديل الرتب المخصصة
+# 4. باقي الأوامر والفعاليات
 # --------------------------------------------------
-def get_role_object(guild: discord.Guild, identifier):
-    if isinstance(identifier, int):
-        return guild.get_role(identifier)
-    return discord.utils.get(guild.roles, name=str(identifier))
-
 async def check_role_rewards(member: discord.Member, new_level: int):
     guild = member.guild
     target_level = None
@@ -275,8 +260,8 @@ async def check_role_rewards(member: discord.Member, new_level: int):
             target_level = lvl
             break
 
-    all_level_roles = [get_role_object(guild, i) for i in LEVEL_ROLES.values() if get_role_object(guild, i)]
-    target_role = get_role_object(guild, LEVEL_ROLES[target_level]) if target_level else None
+    all_level_roles = [guild.get_role(i) for i in LEVEL_ROLES.values() if guild.get_role(i)]
+    target_role = guild.get_role(LEVEL_ROLES[target_level]) if target_level else None
 
     roles_to_remove = [r for r in member.roles if r in all_level_roles and r != target_role]
     if roles_to_remove:
@@ -291,9 +276,6 @@ async def check_role_rewards(member: discord.Member, new_level: int):
         except Exception:
             pass
 
-# --------------------------------------------------
-# 5. الأحداث والـ Voice XP
-# --------------------------------------------------
 @bot.event
 async def on_ready():
     await init_db()
@@ -314,7 +296,6 @@ async def on_message(message):
     parts = content_str.split()
     first_word = parts[0] if parts else ""
 
-    # 1. اختصار R / r (عرض الرتبة)
     if first_word in ["r", "!r", "#r", ".r"]:
         target_member = message.author
         if len(message.mentions) > 0:
@@ -325,7 +306,6 @@ async def on_message(message):
         await rank_command(ctx, target_member)
         return
 
-    # 2. اختصار T / t (عرض المتصدرين)
     if first_word in ["t", "!t", "#t", ".t", "top", "توب"]:
         period = "all"
         if len(parts) > 1:
@@ -339,7 +319,6 @@ async def on_message(message):
         await top_command(ctx, period)
         return
 
-    # احتساب نقاط الـ XP
     user_id = message.author.id
     now = time.time()
 
@@ -396,37 +375,28 @@ async def voice_xp_loop():
                     await log_xp_gain(member.id, XP_PER_VOICE)
         await db.commit()
 
-# --------------------------------------------------
-# 6. الأوامر وقراءة البطاقة وإدارة الخصوصية
-# --------------------------------------------------
 async def rank_command(ctx, member: discord.Member = None):
     member = member or ctx.author
 
     async with aiosqlite.connect("leveling.db") as db:
-        # فحص إعداد الخصوصية
         async with db.execute("SELECT is_private FROM users WHERE user_id = ?", (member.id,)) as cursor:
             priv_row = await cursor.fetchone()
             is_private = priv_row[0] if priv_row else 0
 
-        # حظر الرؤية إن كان البروفايل مقفولاً وكان الطالب عضواً عادياً
         if is_private and ctx.author.id != member.id and not check_admin_or_owner_user(ctx.author):
             await ctx.send("🔒 هذا العضو قام بقفل ملفه الشخصي ولا يمكن رؤية مستواه إلا للإدارة والمالك!")
             return
 
-        # بيانات الكتابي
         async with db.execute("SELECT xp, level FROM users WHERE user_id = ?", (member.id,)) as cursor:
             row_text = await cursor.fetchone()
 
-        # بيانات الصوتي
         async with db.execute("SELECT voice_xp, voice_level FROM users WHERE user_id = ?", (member.id,)) as cursor:
             row_voice = await cursor.fetchone()
 
-        # الترتيب الكتابي
         async with db.execute("SELECT user_id FROM users ORDER BY level DESC, xp DESC") as cursor:
             all_text = await cursor.fetchall()
             text_rank = next((i for i, u in enumerate(all_text, 1) if u[0] == member.id), 1)
 
-        # الترتيب الصوتي
         async with db.execute("SELECT user_id FROM users ORDER BY voice_level DESC, voice_xp DESC") as cursor:
             all_voice = await cursor.fetchall()
             voice_rank = next((i for i, u in enumerate(all_voice, 1) if u[0] == member.id), 1)
@@ -460,7 +430,6 @@ async def toggle_privacy(ctx):
         current_status = row[0] if row else 0
         new_status = 1 if current_status == 0 else 0
 
-        # تحديث قيمة is_private مع الحفاظ على البيانات الأخرى
         await db.execute("""
             INSERT INTO users (user_id, is_private) VALUES (?, ?)
             ON CONFLICT(user_id) DO UPDATE SET is_private = excluded.is_private
@@ -521,9 +490,6 @@ async def top_command(ctx, time_frame: str = "all"):
     embed.description = description
     await ctx.send(embed=embed)
 
-# --------------------------------------------------
-# 7. تشغيل البوت
-# --------------------------------------------------
 token = os.environ.get("DISCORD_TOKEN")
 if token:
     bot.run(token)
