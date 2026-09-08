@@ -5,19 +5,87 @@ from threading import Thread
 import time
 from datetime import datetime, timedelta
 import aiosqlite
+import sqlite3
 import discord
 from discord.ext import commands, tasks
-from flask import Flask
+from flask import Flask, request, render_template_string
 from PIL import Image, ImageDraw, ImageFont
 
 # --------------------------------------------------
-# 🌐 0. سيرفر Flask للحفاظ على اتصال البوت (Keep Alive)
+# 🌐 0. سيرفر Flask والداشبورد للتحكم بالسيرفرات
 # --------------------------------------------------
 app = Flask("")
 
+DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>لوحة تحكم البوت</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a24; color: white; padding: 20px; direction: rtl; }
+        .card { background: #2a2a3a; padding: 25px; border-radius: 12px; max-width: 500px; margin: 30px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        h2 { text-align: center; color: #5865F2; margin-bottom: 20px; }
+        label { display: block; margin-top: 15px; font-weight: bold; }
+        input { width: 100%; padding: 10px; margin-top: 5px; border-radius: 6px; border: 1px solid #444; background: #1e1e2e; color: white; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; margin-top: 20px; border-radius: 6px; border: none; background: #5865F2; color: white; font-weight: bold; font-size: 16px; cursor: pointer; }
+        button:hover { background: #4752C4; }
+        .alert { background: #2e7d32; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🎛️ لوحة تحكم السيرفرات</h2>
+        {% if success %}
+            <div class="alert">✅ تم حفظ إعدادات السيرفر بنجاح!</div>
+        {% endif %}
+        <form method="POST" action="/save">
+            <label>ID السيرفر (Guild ID):</label>
+            <input type="text" name="guild_id" placeholder="مثال: 1309399614138351736" required>
+
+            <label>ID روم الأوامر لهذا السيرفر:</label>
+            <input type="text" name="cmd_channel_id" placeholder="مثال: 1546188748621090926" required>
+
+            <label>ID روم التنبيهات (الليفل أب) لهذا السيرفر:</label>
+            <input type="text" name="level_channel_id" placeholder="مثال: 1546241742448234596">
+
+            <button type="submit">حفظ الإعدادات 💾</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
 @app.route("/")
 def home():
-    return "Bot is online!"
+    return render_template_string(DASHBOARD_HTML, success=False)
+
+@app.route("/save", methods=["POST"])
+def save_settings():
+    guild_id = request.form.get("guild_id")
+    cmd_channel_id = request.form.get("cmd_channel_id")
+    level_channel_id = request.form.get("level_channel_id")
+
+    conn = sqlite3.connect("leveling.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS server_settings (
+            guild_id INTEGER PRIMARY KEY,
+            cmd_channel_id INTEGER,
+            level_channel_id INTEGER
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO server_settings (guild_id, cmd_channel_id, level_channel_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            cmd_channel_id=excluded.cmd_channel_id,
+            level_channel_id=excluded.level_channel_id
+    """, (int(guild_id), int(cmd_channel_id), int(level_channel_id) if level_channel_id else None))
+    conn.commit()
+    conn.close()
+
+    return render_template_string(DASHBOARD_HTML, success=True)
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -44,9 +112,6 @@ COOLDOWN_TIME = 60
 XP_PER_MESSAGE = 15
 XP_PER_VOICE = 10
 
-LEVEL_UP_CHANNEL_ID = 1546241742448234596
-COMMAND_CHANNEL_ID = 1546188748621090926
-
 cooldowns = {}
 
 ADMIN_ROLE_IDS = [
@@ -72,16 +137,23 @@ LEVEL_ROLES = {
 }
 
 # --------------------------------------------------
-# 🎯 تقييد الأوامر والصلاحيات
+# 🎯 تقييد الأوامر والصلاحيات حسب السيرفر
 # --------------------------------------------------
 @bot.check
 async def restrict_commands_to_channel(ctx):
     if not ctx.guild:
         return True
-    if ctx.channel.id != COMMAND_CHANNEL_ID:
-        raise commands.CheckFailure(
-            f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{COMMAND_CHANNEL_ID}>"
-        )
+
+    async with aiosqlite.connect("leveling.db") as db:
+        async with db.execute("SELECT cmd_channel_id FROM server_settings WHERE guild_id = ?", (ctx.guild.id,)) as cursor:
+            row = await cursor.fetchone()
+
+    if row and row[0]:
+        allowed_channel_id = int(row[0])
+        if ctx.channel.id != allowed_channel_id:
+            raise commands.CheckFailure(
+                f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>"
+            )
     return True
 
 def check_admin_or_owner_user(member: discord.Member) -> bool:
@@ -97,6 +169,13 @@ def check_admin_or_owner_user(member: discord.Member) -> bool:
 # --------------------------------------------------
 async def init_db():
     async with aiosqlite.connect("leveling.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS server_settings (
+                guild_id INTEGER PRIMARY KEY,
+                cmd_channel_id INTEGER,
+                level_channel_id INTEGER
+            )
+        """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -146,7 +225,7 @@ async def log_xp_gain(user_id: int, amount: int):
         await db.commit()
 
 # --------------------------------------------------
-# 3. صانع بطاقة Rank Card (بأحجام خطوط كبيرة ومضمونة)
+# 3. صانع بطاقة Rank Card
 # --------------------------------------------------
 async def generate_dual_rank_card(
     member: discord.Member,
@@ -175,7 +254,6 @@ async def generate_dual_rank_card(
     wave_draw.ellipse([(420, 100), (950, 550)], fill=(75, 45, 145, 160))
     image.paste(wave_overlay, (0, 0), bg_mask)
 
-    # صورة الشخصية
     try:
         avatar_bytes = await member.display_avatar.with_format("png").read()
         avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((200, 200))
@@ -186,7 +264,6 @@ async def generate_dual_rank_card(
     except Exception:
         pass
 
-    # تحميل الخطوط مع ضمان الحجم الكبير دون التراجع للخط الصغير القديم
     def load_font(size):
         for font_path in ["arial.ttf", "DejaVuSans.ttf", "FreeSans.ttf", "Ubuntu-R.ttf"]:
             try:
@@ -213,7 +290,6 @@ async def generate_dual_rank_card(
     draw.text((275, 95), "LVL", fill=(180, 180, 210, 255), font=font_small)
     draw.text((275, 120), str(text_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    # أيقونة الشات
     draw.rounded_rectangle([(345, 120), (385, 150)], radius=6, fill=(255, 255, 255, 255))
     draw.polygon([(350, 150), (350, 162), (362, 150)], fill=(255, 255, 255, 255))
 
@@ -230,7 +306,6 @@ async def generate_dual_rank_card(
     draw.text((275, 215), "LVL", fill=(180, 180, 210, 255), font=font_small)
     draw.text((275, 240), str(voice_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    # أيقونة المايك
     draw.rounded_rectangle([(357, 235), (373, 262)], radius=7, fill=(255, 255, 255, 255))
     draw.arc([(350, 245), (380, 268)], start=0, end=180, fill=(255, 255, 255, 255), width=3)
     draw.line([(365, 268), (365, 276)], fill=(255, 255, 255, 255), width=3)
@@ -250,7 +325,7 @@ async def generate_dual_rank_card(
     return buffer
 
 # --------------------------------------------------
-# 4. باقي الأوامر والفعاليات
+# 4. الأحداث والأوامر
 # --------------------------------------------------
 async def check_role_rewards(member: discord.Member, new_level: int):
     guild = member.guild
@@ -338,7 +413,14 @@ async def on_message(message):
                 if xp >= needed_xp:
                     level += 1
                     xp -= needed_xp
-                    level_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) or message.channel
+                    
+                    # جلب روم التنبيهات المخصص لهذا السيرفر
+                    async with db.execute("SELECT level_channel_id FROM server_settings WHERE guild_id = ?", (message.guild.id,)) as cursor_lvl:
+                        lvl_row = await cursor_lvl.fetchone()
+                    
+                    target_channel_id = lvl_row[0] if (lvl_row and lvl_row[0]) else None
+                    level_channel = bot.get_channel(target_channel_id) if target_channel_id else message.channel
+                    
                     if level_channel:
                         await level_channel.send(f"🎉 تهانينا {message.author.mention}! لقد ارتفعت إلى **Level {level}**!")
                     await check_role_rewards(message.author, level)
