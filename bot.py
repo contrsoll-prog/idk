@@ -280,12 +280,16 @@ async def check_role_rewards(member: discord.Member, new_level: int):
 
     roles_to_remove = [r for r in member.roles if r in all_level_roles and r != target_role]
     if roles_to_remove:
-        try: await member.remove_roles(*roles_to_remove)
-        except Exception: pass
+        try:
+            await member.remove_roles(*roles_to_remove)
+        except Exception:
+            pass
 
     if target_role and target_role not in member.roles:
-        try: await member.add_roles(target_role)
-        except Exception: pass
+        try:
+            await member.add_roles(target_role)
+        except Exception:
+            pass
 
 # --------------------------------------------------
 # 5. الأحداث والـ Voice XP
@@ -325,9 +329,12 @@ async def on_message(message):
     if first_word in ["t", "!t", "#t", ".t", "top", "توب"]:
         period = "all"
         if len(parts) > 1:
-            if parts[1] in ["daily", "يومي", "اليوم"]: period = "daily"
-            elif parts[1] in ["weekly", "اسبوعي", "أسبوعي", "الأسبوع"]: period = "weekly"
-            elif parts[1] in ["monthly", "شهري", "الشهر"]: period = "monthly"
+            if parts[1] in ["daily", "يومي", "اليوم"]:
+                period = "daily"
+            elif parts[1] in ["weekly", "اسبوعي", "أسبوعي", "الأسبوع"]:
+                period = "weekly"
+            elif parts[1] in ["monthly", "شهري", "الشهر"]:
+                period = "monthly"
         ctx = await bot.get_context(message)
         await top_command(ctx, period)
         return
@@ -350,7 +357,6 @@ async def on_message(message):
                 needed_xp = get_needed_xp(level)
 
                 if xp >= needed_xp:
-                    old_level = level
                     level += 1
                     xp -= needed_xp
                     level_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) or message.channel
@@ -370,10 +376,12 @@ async def voice_xp_loop():
         for guild in bot.guilds:
             for vc in guild.voice_channels:
                 real_members = [m for m in vc.members if not m.bot]
-                if len(real_members) < 2: continue
+                if len(real_members) < 2:
+                    continue
 
                 for member in real_members:
-                    if member.voice.self_deaf or member.voice.deaf: continue
+                    if member.voice.self_deaf or member.voice.deaf:
+                        continue
                     async with db.execute("SELECT voice_xp, voice_level FROM users WHERE user_id = ?", (member.id,)) as cursor:
                         row = await cursor.fetchone()
 
@@ -448,9 +456,15 @@ async def toggle_privacy(ctx):
     async with aiosqlite.connect("leveling.db") as db:
         async with db.execute("SELECT is_private FROM users WHERE user_id = ?", (ctx.author.id,)) as cursor:
             row = await cursor.fetchone()
-        
-        new_status = 1 if not row or row[0] == 0 else 0
-        await db.execute("INSERT OR REPLACE INTO users (user_id, is_private) VALUES (?, ?)", (ctx.author.id, new_status))
+
+        current_status = row[0] if row else 0
+        new_status = 1 if current_status == 0 else 0
+
+        # تحديث قيمة is_private مع الحفاظ على البيانات الأخرى
+        await db.execute("""
+            INSERT INTO users (user_id, is_private) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET is_private = excluded.is_private
+        """, (ctx.author.id, new_status))
         await db.commit()
 
     msg = "🔒 تم **قفل** بطاقتك التعرفية! لن يستطيع أحد رؤيتها غيرك والإدارة." if new_status else "🔓 تم **فتح** بطاقتك التعرفية للجميع!"
