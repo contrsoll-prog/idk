@@ -3,7 +3,7 @@ import math
 import os
 from threading import Thread
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import aiosqlite
 import sqlite3
 import discord
@@ -122,7 +122,7 @@ DASHBOARD_HTML = """
 """
 
 def get_db_connection():
-    conn = sqlite3.connect("leveling.db", timeout=10.0)
+    conn = sqlite3.connect("leveling.db", timeout=20.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -218,7 +218,6 @@ intents.message_content = True
 intents.members = True
 intents.voice_states = True
 
-# تم إزالة البادئة الفارغة لمنع التعارضات في المعالجة
 bot = commands.Bot(
     command_prefix=["!", "#", "."], intents=intents, help_command=None
 )
@@ -236,7 +235,7 @@ async def is_channel_allowed(ctx_or_message):
     if not ctx_or_message.guild:
         return True, None
 
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         async with db.execute("SELECT cmd_channel_id FROM server_settings WHERE guild_id = ?", (ctx_or_message.guild.id,)) as cursor:
             row = await cursor.fetchone()
 
@@ -261,7 +260,7 @@ async def check_admin_or_owner_user(member: discord.Member) -> bool:
     if member.id == member.guild.owner_id:
         return True
     
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         async with db.execute("SELECT admin_role_ids FROM server_settings WHERE guild_id = ?", (member.guild.id,)) as cursor:
             row = await cursor.fetchone()
             
@@ -275,8 +274,7 @@ async def check_admin_or_owner_user(member: discord.Member) -> bool:
 # 2. قاعدة البيانات ودعم تعدد السيرفرات
 # --------------------------------------------------
 async def init_db():
-    async with aiosqlite.connect("leveling.db") as db:
-        # تفعيل WAL mode لتجنب قفل قاعدة البيانات بين Flask و Discord Bot
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         await db.execute("PRAGMA journal_mode=WAL;")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS server_settings (
@@ -328,10 +326,10 @@ def format_number(num: int) -> str:
     return str(num)
 
 async def log_xp_gain(guild_id: int, user_id: int, amount: int):
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         await db.execute(
             "INSERT INTO xp_logs (guild_id, user_id, amount, timestamp) VALUES (?, ?, ?, ?)",
-            (guild_id, user_id, amount, datetime.utcnow())
+            (guild_id, user_id, amount, datetime.now(timezone.utc))
         )
         await db.commit()
 
@@ -440,7 +438,7 @@ async def generate_dual_rank_card(
 # --------------------------------------------------
 async def check_role_rewards(member: discord.Member, new_level: int):
     guild = member.guild
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         async with db.execute("SELECT level, role_id FROM server_roles WHERE guild_id = ? ORDER BY level DESC", (guild.id,)) as cursor:
             server_roles = await cursor.fetchall()
 
@@ -534,7 +532,7 @@ async def on_message(message):
 
     if key not in cooldowns or (now - cooldowns[key]) >= COOLDOWN_TIME:
         cooldowns[key] = now
-        async with aiosqlite.connect("leveling.db") as db:
+        async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
             async with db.execute("SELECT xp, level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)) as cursor:
                 row = await cursor.fetchone()
 
@@ -561,22 +559,24 @@ async def on_message(message):
 
                 await db.execute("UPDATE users SET xp = ?, level = ? WHERE guild_id = ? AND user_id = ?", (xp, level, guild_id, user_id))
             await db.commit()
-            await log_xp_gain(guild_id, user_id, XP_PER_MESSAGE)
+        
+        await log_xp_gain(guild_id, user_id, XP_PER_MESSAGE)
 
     await bot.process_commands(message)
 
 @tasks.loop(minutes=1)
 async def voice_xp_loop():
-    async with aiosqlite.connect("leveling.db") as db:
-        for guild in bot.guilds:
-            for vc in guild.voice_channels:
-                real_members = [m for m in vc.members if not m.bot]
-                if len(real_members) < 2:
-                    continue
+    for guild in bot.guilds:
+        for vc in guild.voice_channels:
+            real_members = [m for m in vc.members if not m.bot]
+            if len(real_members) < 2:
+                continue
 
-                for member in real_members:
-                    if member.voice.self_deaf or member.voice.deaf:
-                        continue
+            for member in real_members:
+                if member.voice.self_deaf or member.voice.deaf:
+                    continue
+                
+                async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
                     async with db.execute("SELECT voice_xp, voice_level FROM users WHERE guild_id = ? AND user_id = ?", (guild.id, member.id)) as cursor:
                         row = await cursor.fetchone()
 
@@ -588,14 +588,15 @@ async def voice_xp_loop():
                             v_level += 1
                             v_xp -= get_needed_xp(v_level)
                         await db.execute("UPDATE users SET voice_xp = ?, voice_level = ? WHERE guild_id = ? AND user_id = ?", (v_xp, v_level, guild.id, member.id))
-                    await log_xp_gain(guild.id, member.id, XP_PER_VOICE)
-        await db.commit()
+                    await db.commit()
+
+                await log_xp_gain(guild.id, member.id, XP_PER_VOICE)
 
 async def rank_command(ctx, member: discord.Member = None):
     member = member or ctx.author
     guild_id = ctx.guild.id
 
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         async with db.execute("SELECT is_private FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
             priv_row = await cursor.fetchone()
             is_private = priv_row[0] if priv_row else 0
@@ -642,7 +643,7 @@ async def rank_command(ctx, member: discord.Member = None):
 @bot.command(name="privacy", aliases=["قفلي", "قفل", "خصوصية"])
 async def toggle_privacy(ctx):
     guild_id = ctx.guild.id
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         async with db.execute("SELECT is_private FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, ctx.author.id)) as cursor:
             row = await cursor.fetchone()
 
@@ -660,13 +661,13 @@ async def toggle_privacy(ctx):
 
 async def top_command(ctx, time_frame: str = "all"):
     guild_id = ctx.guild.id
-    async with aiosqlite.connect("leveling.db") as db:
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         if time_frame == "all":
             title = "🏆 قائمة المتصدرين (الكلي)"
             async with db.execute("SELECT user_id, level, xp FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 10", (guild_id,)) as cursor:
                 rows = await cursor.fetchall()
         else:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if time_frame == "daily":
                 title = "📅 قائمة المتصدرين (اليومي)"
                 start_time = now - timedelta(days=1)
