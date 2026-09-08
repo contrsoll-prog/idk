@@ -12,7 +12,7 @@ from flask import Flask, request, render_template_string, redirect, url_for
 from PIL import Image, ImageDraw, ImageFont
 
 # --------------------------------------------------
-# 🌐 0. سيرفر Flask والداشبورد المطور
+# 🌐 0. سيرفر Flask والداشبورد المطور لكل السيرفرات
 # --------------------------------------------------
 app = Flask("")
 
@@ -21,7 +21,7 @@ DASHBOARD_HTML = """
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>لوحة تحكم البوت المتقدمة</title>
+    <title>لوحة تحكم البوت</title>
     <style>
         body { font-family: Arial, sans-serif; background: #1a1a24; color: white; padding: 20px; direction: rtl; }
         .container { max-width: 700px; margin: 0 auto; }
@@ -42,17 +42,17 @@ DASHBOARD_HTML = """
 <body>
     <div class="container">
         <div class="card">
-            <h2>🎛️ البحث / اختيار السيرفر</h2>
+            <h2>🎛️ إدارة السيرفرات</h2>
             <form method="GET" action="/">
-                <label>ID السيرفر (Guild ID):</label>
-                <input type="text" name="guild_id" value="{{ guild_id or '' }}" placeholder="ادخل ID السيرفر للتحكم به" required>
+                <label>ادخل ID السيرفر لتعديل إعداداته:</label>
+                <input type="text" name="guild_id" value="{{ guild_id or '' }}" placeholder="مثال: 1309399614138351736" required>
                 <button type="submit">جلب بيانات السيرفر 🔍</button>
             </form>
         </div>
 
         {% if guild_id %}
         {% if success %}
-            <div class="alert">✅ تم حفظ التعديلات بنجاح!</div>
+            <div class="alert">✅ تم حفظ الإعدادات بنجاح!</div>
         {% endif %}
 
         <div class="card">
@@ -67,7 +67,7 @@ DASHBOARD_HTML = """
                 <input type="text" name="level_channel_id" value="{{ settings.level_channel_id or '' }}" placeholder="مثال: 1546241742448234596">
 
                 <label>IDs رتب الأدمن (افصل بينها بفاصلة ,):</label>
-                <input type="text" name="admin_role_ids" value="{{ settings.admin_role_ids or '' }}" placeholder="مثال: 12345,67890">
+                <input type="text" name="admin_role_ids" value="{{ settings.admin_role_ids or '' }}" placeholder="مثال: 123456789,987654321">
 
                 <button type="submit">حفظ الإعدادات الأساسية 💾</button>
             </form>
@@ -77,13 +77,13 @@ DASHBOARD_HTML = """
             <h3>🎁 مكافآت المستويات (Level Roles)</h3>
             <form method="POST" action="/add_role">
                 <input type="hidden" name="guild_id" value="{{ guild_id }}">
-                <label>المستوى المطلوبة (Level):</label>
+                <label>المستوى (Level):</label>
                 <input type="number" name="level" placeholder="مثال: 5" required>
                 
                 <label>ID الرتبة (Role ID):</label>
                 <input type="text" name="role_id" placeholder="مثال: 1546239996082651267" required>
                 
-                <button type="submit">إضافة رتبة مستوى ➕</button>
+                <button type="submit">إضافة رتبة ➕</button>
             </form>
 
             <table>
@@ -225,7 +225,7 @@ XP_PER_VOICE = 10
 cooldowns = {}
 
 # --------------------------------------------------
-# 🎯 تقييد الأوامر والصلاحيات حسب السيرفر
+# 🎯 تقييد الأوامر والصلاحيات ديناميكياً لكل السيرفرات
 # --------------------------------------------------
 @bot.check
 async def restrict_commands_to_channel(ctx):
@@ -302,18 +302,6 @@ async def init_db():
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # الهجرة التلقائية من القاعدة القديمة إن وجدت
-        async with db.execute("PRAGMA table_info(server_settings)") as cursor:
-            columns = [column[1] for column in await cursor.fetchall()]
-            if "admin_role_ids" not in columns:
-                await db.execute("ALTER TABLE server_settings ADD COLUMN admin_role_ids TEXT")
-
-        async with db.execute("PRAGMA table_info(xp_logs)") as cursor:
-            columns = [column[1] for column in await cursor.fetchall()]
-            if "guild_id" not in columns:
-                await db.execute("ALTER TABLE xp_logs ADD COLUMN guild_id INTEGER")
-
         await db.commit()
 
 def get_needed_xp(level: int) -> int:
