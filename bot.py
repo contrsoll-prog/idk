@@ -8,11 +8,11 @@ import aiosqlite
 import sqlite3
 import discord
 from discord.ext import commands, tasks
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, redirect, url_for
 from PIL import Image, ImageDraw, ImageFont
 
 # --------------------------------------------------
-# 🌐 0. سيرفر Flask والداشبورد للتحكم بالسيرفرات
+# 🌐 0. سيرفر Flask والداشبورد المطور
 # --------------------------------------------------
 app = Flask("")
 
@@ -21,36 +21,101 @@ DASHBOARD_HTML = """
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>لوحة تحكم البوت</title>
+    <title>لوحة تحكم البوت المتقدمة</title>
     <style>
         body { font-family: Arial, sans-serif; background: #1a1a24; color: white; padding: 20px; direction: rtl; }
-        .card { background: #2a2a3a; padding: 25px; border-radius: 12px; max-width: 500px; margin: 30px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        h2 { text-align: center; color: #5865F2; margin-bottom: 20px; }
+        .container { max-width: 700px; margin: 0 auto; }
+        .card { background: #2a2a3a; padding: 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        h2, h3 { color: #5865F2; margin-top: 0; }
         label { display: block; margin-top: 15px; font-weight: bold; }
         input { width: 100%; padding: 10px; margin-top: 5px; border-radius: 6px; border: 1px solid #444; background: #1e1e2e; color: white; box-sizing: border-box; }
         button { width: 100%; padding: 12px; margin-top: 20px; border-radius: 6px; border: none; background: #5865F2; color: white; font-weight: bold; font-size: 16px; cursor: pointer; }
         button:hover { background: #4752C4; }
+        .btn-danger { background: #ed4245; padding: 6px 12px; font-size: 12px; margin-top: 0; width: auto; }
+        .btn-danger:hover { background: #c03537; }
         .alert { background: #2e7d32; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; }
+        table { width: 100%; margin-top: 15px; border-collapse: collapse; }
+        th, td { border: 1px solid #444; padding: 10px; text-align: center; }
+        th { background: #1e1e2e; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2>🎛️ لوحة تحكم السيرفرات</h2>
+    <div class="container">
+        <div class="card">
+            <h2>🎛️ البحث / اختيار السيرفر</h2>
+            <form method="GET" action="/">
+                <label>ID السيرفر (Guild ID):</label>
+                <input type="text" name="guild_id" value="{{ guild_id or '' }}" placeholder="ادخل ID السيرفر للتحكم به" required>
+                <button type="submit">جلب بيانات السيرفر 🔍</button>
+            </form>
+        </div>
+
+        {% if guild_id %}
         {% if success %}
-            <div class="alert">✅ تم حفظ إعدادات السيرفر بنجاح!</div>
+            <div class="alert">✅ تم حفظ التعديلات بنجاح!</div>
         {% endif %}
-        <form method="POST" action="/save">
-            <label>ID السيرفر (Guild ID):</label>
-            <input type="text" name="guild_id" placeholder="مثال: 1309399614138351736" required>
 
-            <label>ID روم الأوامر لهذا السيرفر:</label>
-            <input type="text" name="cmd_channel_id" placeholder="مثال: 1546188748621090926" required>
+        <div class="card">
+            <h3>⚙️ إعدادات السيرفر الأساسية</h3>
+            <form method="POST" action="/save_settings">
+                <input type="hidden" name="guild_id" value="{{ guild_id }}">
+                
+                <label>ID روم الأوامر:</label>
+                <input type="text" name="cmd_channel_id" value="{{ settings.cmd_channel_id or '' }}" placeholder="مثال: 1546188748621090926" required>
 
-            <label>ID روم التنبيهات (الليفل أب) لهذا السيرفر:</label>
-            <input type="text" name="level_channel_id" placeholder="مثال: 1546241742448234596">
+                <label>ID روم التنبيهات (الليفل أب):</label>
+                <input type="text" name="level_channel_id" value="{{ settings.level_channel_id or '' }}" placeholder="مثال: 1546241742448234596">
 
-            <button type="submit">حفظ الإعدادات 💾</button>
-        </form>
+                <label>IDs رتب الأدمن (افصل بينها بفاصلة ,):</label>
+                <input type="text" name="admin_role_ids" value="{{ settings.admin_role_ids or '' }}" placeholder="مثال: 12345,67890">
+
+                <button type="submit">حفظ الإعدادات الأساسية 💾</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>🎁 مكافآت المستويات (Level Roles)</h3>
+            <form method="POST" action="/add_role">
+                <input type="hidden" name="guild_id" value="{{ guild_id }}">
+                <label>المستوى المطلوبة (Level):</label>
+                <input type="number" name="level" placeholder="مثال: 5" required>
+                
+                <label>ID الرتبة (Role ID):</label>
+                <input type="text" name="role_id" placeholder="مثال: 1546239996082651267" required>
+                
+                <button type="submit">إضافة رتبة مستوى ➕</button>
+            </form>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>المستوى</th>
+                        <th>ID الرتبة</th>
+                        <th>إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for role in level_roles %}
+                    <tr>
+                        <td>{{ role.level }}</td>
+                        <td>{{ role.role_id }}</td>
+                        <td>
+                            <form method="POST" action="/delete_role" style="margin:0;">
+                                <input type="hidden" name="guild_id" value="{{ guild_id }}">
+                                <input type="hidden" name="level" value="{{ role.level }}">
+                                <button type="submit" class="btn-danger">حذف ❌</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3">لا توجد رتب مضافة لهذا السيرفر بعد.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>
@@ -58,34 +123,79 @@ DASHBOARD_HTML = """
 
 @app.route("/")
 def home():
-    return render_template_string(DASHBOARD_HTML, success=False)
+    guild_id = request.args.get("guild_id")
+    success = request.args.get("success", False)
+    settings = {}
+    level_roles = []
 
-@app.route("/save", methods=["POST"])
+    if guild_id and guild_id.isdigit():
+        conn = sqlite3.connect("leveling.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM server_settings WHERE guild_id = ?", (int(guild_id),))
+        row = cursor.fetchone()
+        if row:
+            settings = dict(row)
+
+        cursor.execute("SELECT level, role_id FROM server_roles WHERE guild_id = ? ORDER BY level ASC", (int(guild_id),))
+        level_roles = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+    return render_template_string(DASHBOARD_HTML, guild_id=guild_id, settings=settings, level_roles=level_roles, success=success)
+
+@app.route("/save_settings", methods=["POST"])
 def save_settings():
     guild_id = request.form.get("guild_id")
     cmd_channel_id = request.form.get("cmd_channel_id")
     level_channel_id = request.form.get("level_channel_id")
+    admin_role_ids = request.form.get("admin_role_ids", "")
 
     conn = sqlite3.connect("leveling.db")
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS server_settings (
-            guild_id INTEGER PRIMARY KEY,
-            cmd_channel_id INTEGER,
-            level_channel_id INTEGER
-        )
-    """)
-    cursor.execute("""
-        INSERT INTO server_settings (guild_id, cmd_channel_id, level_channel_id)
-        VALUES (?, ?, ?)
+        INSERT INTO server_settings (guild_id, cmd_channel_id, level_channel_id, admin_role_ids)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET
             cmd_channel_id=excluded.cmd_channel_id,
-            level_channel_id=excluded.level_channel_id
-    """, (int(guild_id), int(cmd_channel_id), int(level_channel_id) if level_channel_id else None))
+            level_channel_id=excluded.level_channel_id,
+            admin_role_ids=excluded.admin_role_ids
+    """, (int(guild_id), int(cmd_channel_id), int(level_channel_id) if level_channel_id else None, admin_role_ids))
     conn.commit()
     conn.close()
 
-    return render_template_string(DASHBOARD_HTML, success=True)
+    return redirect(url_for("home", guild_id=guild_id, success=True))
+
+@app.route("/add_role", methods=["POST"])
+def add_role():
+    guild_id = request.form.get("guild_id")
+    level = request.form.get("level")
+    role_id = request.form.get("role_id")
+
+    conn = sqlite3.connect("leveling.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO server_roles (guild_id, level, role_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id, level) DO UPDATE SET role_id=excluded.role_id
+    """, (int(guild_id), int(level), int(role_id)))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for("home", guild_id=guild_id, success=True))
+
+@app.route("/delete_role", methods=["POST"])
+def delete_role():
+    guild_id = request.form.get("guild_id")
+    level = request.form.get("level")
+
+    conn = sqlite3.connect("leveling.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM server_roles WHERE guild_id = ? AND level = ?", (int(guild_id), int(level)))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for("home", guild_id=guild_id, success=True))
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -114,28 +224,6 @@ XP_PER_VOICE = 10
 
 cooldowns = {}
 
-ADMIN_ROLE_IDS = [
-    1546189327904804927,
-]
-
-LEVEL_ROLES = {
-    5: 1546239996082651267,
-    10: 1546239973857034321,
-    15: 1546239956031250493,
-    20: 1546239934409736365,
-    25: 1546239886221254837,
-    35: 1546239858073145535,
-    45: 1546239839316213881,
-    50: 1546239823185186906,
-    60: 1546239796865798164,
-    70: 1546239777144184872,
-    80: 1546239759536488489,
-    90: 1546239740381110362,
-    99: 1546244817745612871,
-    100: 1546239698589188238,
-    120: 1546239644419497994,
-}
-
 # --------------------------------------------------
 # 🎯 تقييد الأوامر والصلاحيات حسب السيرفر
 # --------------------------------------------------
@@ -156,16 +244,24 @@ async def restrict_commands_to_channel(ctx):
             )
     return True
 
-def check_admin_or_owner_user(member: discord.Member) -> bool:
+async def check_admin_or_owner_user(member: discord.Member) -> bool:
     if not member.guild:
         return False
     if member.id == member.guild.owner_id:
         return True
-    author_role_ids = [role.id for role in member.roles]
-    return any(role_id in ADMIN_ROLE_IDS for role_id in author_role_ids)
+    
+    async with aiosqlite.connect("leveling.db") as db:
+        async with db.execute("SELECT admin_role_ids FROM server_settings WHERE guild_id = ?", (member.guild.id,)) as cursor:
+            row = await cursor.fetchone()
+            
+    if row and row[0]:
+        admin_roles = [int(r.strip()) for r in row[0].split(",") if r.strip().isdigit()]
+        author_role_ids = [role.id for role in member.roles]
+        return any(role_id in admin_roles for role_id in author_role_ids)
+    return False
 
 # --------------------------------------------------
-# 2. قاعدة البيانات وتدريج صعوبة الـ XP
+# 2. قاعدة البيانات ودعم تعدد السيرفرات
 # --------------------------------------------------
 async def init_db():
     async with aiosqlite.connect("leveling.db") as db:
@@ -173,36 +269,50 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS server_settings (
                 guild_id INTEGER PRIMARY KEY,
                 cmd_channel_id INTEGER,
-                level_channel_id INTEGER
+                level_channel_id INTEGER,
+                admin_role_ids TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS server_roles (
+                guild_id INTEGER,
+                level INTEGER,
+                role_id INTEGER,
+                PRIMARY KEY (guild_id, level)
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+                guild_id INTEGER,
+                user_id INTEGER,
                 xp INTEGER DEFAULT 0,
                 level INTEGER DEFAULT 0,
                 voice_xp INTEGER DEFAULT 0,
                 voice_level INTEGER DEFAULT 0,
-                is_private INTEGER DEFAULT 0
+                is_private INTEGER DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id)
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS xp_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER,
                 user_id INTEGER,
                 amount INTEGER,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        async with db.execute("PRAGMA table_info(users)") as cursor:
+        # الهجرة التلقائية من القاعدة القديمة إن وجدت
+        async with db.execute("PRAGMA table_info(server_settings)") as cursor:
             columns = [column[1] for column in await cursor.fetchall()]
-            if "voice_xp" not in columns:
-                await db.execute("ALTER TABLE users ADD COLUMN voice_xp INTEGER DEFAULT 0")
-            if "voice_level" not in columns:
-                await db.execute("ALTER TABLE users ADD COLUMN voice_level INTEGER DEFAULT 0")
-            if "is_private" not in columns:
-                await db.execute("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0")
+            if "admin_role_ids" not in columns:
+                await db.execute("ALTER TABLE server_settings ADD COLUMN admin_role_ids TEXT")
+
+        async with db.execute("PRAGMA table_info(xp_logs)") as cursor:
+            columns = [column[1] for column in await cursor.fetchall()]
+            if "guild_id" not in columns:
+                await db.execute("ALTER TABLE xp_logs ADD COLUMN guild_id INTEGER")
 
         await db.commit()
 
@@ -216,11 +326,11 @@ def format_number(num: int) -> str:
         return f"{num / 1_000:.1f}K".replace(".0K", "K")
     return str(num)
 
-async def log_xp_gain(user_id: int, amount: int):
+async def log_xp_gain(guild_id: int, user_id: int, amount: int):
     async with aiosqlite.connect("leveling.db") as db:
         await db.execute(
-            "INSERT INTO xp_logs (user_id, amount, timestamp) VALUES (?, ?, ?)",
-            (user_id, amount, datetime.utcnow())
+            "INSERT INTO xp_logs (guild_id, user_id, amount, timestamp) VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, amount, datetime.utcnow())
         )
         await db.commit()
 
@@ -329,14 +439,22 @@ async def generate_dual_rank_card(
 # --------------------------------------------------
 async def check_role_rewards(member: discord.Member, new_level: int):
     guild = member.guild
+    async with aiosqlite.connect("leveling.db") as db:
+        async with db.execute("SELECT level, role_id FROM server_roles WHERE guild_id = ? ORDER BY level DESC", (guild.id,)) as cursor:
+            server_roles = await cursor.fetchall()
+
+    if not server_roles:
+        return
+
+    level_map = {row[0]: row[1] for row in server_roles}
     target_level = None
-    for lvl in sorted(LEVEL_ROLES.keys(), reverse=True):
+    for lvl in sorted(level_map.keys(), reverse=True):
         if new_level >= lvl:
             target_level = lvl
             break
 
-    all_level_roles = [guild.get_role(i) for i in LEVEL_ROLES.values() if guild.get_role(i)]
-    target_role = guild.get_role(LEVEL_ROLES[target_level]) if target_level else None
+    all_level_roles = [guild.get_role(r_id) for r_id in level_map.values() if guild.get_role(r_id)]
+    target_role = guild.get_role(level_map[target_level]) if target_level else None
 
     roles_to_remove = [r for r in member.roles if r in all_level_roles and r != target_role]
     if roles_to_remove:
@@ -394,18 +512,20 @@ async def on_message(message):
         await top_command(ctx, period)
         return
 
+    guild_id = message.guild.id
     user_id = message.author.id
+    key = (guild_id, user_id)
     now = time.time()
 
-    if user_id not in cooldowns or (now - cooldowns[user_id]) >= COOLDOWN_TIME:
-        cooldowns[user_id] = now
+    if key not in cooldowns or (now - cooldowns[key]) >= COOLDOWN_TIME:
+        cooldowns[key] = now
         async with aiosqlite.connect("leveling.db") as db:
-            async with db.execute("SELECT xp, level FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            async with db.execute("SELECT xp, level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)) as cursor:
                 row = await cursor.fetchone()
 
             if not row:
                 xp, level = XP_PER_MESSAGE, 0
-                await db.execute("INSERT INTO users (user_id, xp, level) VALUES (?, ?, ?)", (user_id, xp, level))
+                await db.execute("INSERT INTO users (guild_id, user_id, xp, level) VALUES (?, ?, ?, ?)", (guild_id, user_id, xp, level))
             else:
                 xp, level = row[0] + XP_PER_MESSAGE, row[1]
                 needed_xp = get_needed_xp(level)
@@ -414,8 +534,7 @@ async def on_message(message):
                     level += 1
                     xp -= needed_xp
                     
-                    # جلب روم التنبيهات المخصص لهذا السيرفر
-                    async with db.execute("SELECT level_channel_id FROM server_settings WHERE guild_id = ?", (message.guild.id,)) as cursor_lvl:
+                    async with db.execute("SELECT level_channel_id FROM server_settings WHERE guild_id = ?", (guild_id,)) as cursor_lvl:
                         lvl_row = await cursor_lvl.fetchone()
                     
                     target_channel_id = lvl_row[0] if (lvl_row and lvl_row[0]) else None
@@ -425,9 +544,9 @@ async def on_message(message):
                         await level_channel.send(f"🎉 تهانينا {message.author.mention}! لقد ارتفعت إلى **Level {level}**!")
                     await check_role_rewards(message.author, level)
 
-                await db.execute("UPDATE users SET xp = ?, level = ? WHERE user_id = ?", (xp, level, user_id))
+                await db.execute("UPDATE users SET xp = ?, level = ? WHERE guild_id = ? AND user_id = ?", (xp, level, guild_id, user_id))
             await db.commit()
-            await log_xp_gain(user_id, XP_PER_MESSAGE)
+            await log_xp_gain(guild_id, user_id, XP_PER_MESSAGE)
 
     await bot.process_commands(message)
 
@@ -443,43 +562,45 @@ async def voice_xp_loop():
                 for member in real_members:
                     if member.voice.self_deaf or member.voice.deaf:
                         continue
-                    async with db.execute("SELECT voice_xp, voice_level FROM users WHERE user_id = ?", (member.id,)) as cursor:
+                    async with db.execute("SELECT voice_xp, voice_level FROM users WHERE guild_id = ? AND user_id = ?", (guild.id, member.id)) as cursor:
                         row = await cursor.fetchone()
 
-                    if not row or row[0] is None:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, voice_xp, voice_level) VALUES (?, ?, ?)", (member.id, XP_PER_VOICE, 0))
+                    if not row:
+                        await db.execute("INSERT INTO users (guild_id, user_id, voice_xp, voice_level) VALUES (?, ?, ?, ?)", (guild.id, member.id, XP_PER_VOICE, 0))
                     else:
-                        v_xp, v_level = row[0] + XP_PER_VOICE, row[1]
+                        v_xp, v_level = (row[0] or 0) + XP_PER_VOICE, (row[1] or 0)
                         if v_xp >= get_needed_xp(v_level):
                             v_level += 1
                             v_xp -= get_needed_xp(v_level)
-                        await db.execute("UPDATE users SET voice_xp = ?, voice_level = ? WHERE user_id = ?", (v_xp, v_level, member.id))
-                    await log_xp_gain(member.id, XP_PER_VOICE)
+                        await db.execute("UPDATE users SET voice_xp = ?, voice_level = ? WHERE guild_id = ? AND user_id = ?", (v_xp, v_level, guild.id, member.id))
+                    await log_xp_gain(guild.id, member.id, XP_PER_VOICE)
         await db.commit()
 
 async def rank_command(ctx, member: discord.Member = None):
     member = member or ctx.author
+    guild_id = ctx.guild.id
 
     async with aiosqlite.connect("leveling.db") as db:
-        async with db.execute("SELECT is_private FROM users WHERE user_id = ?", (member.id,)) as cursor:
+        async with db.execute("SELECT is_private FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
             priv_row = await cursor.fetchone()
             is_private = priv_row[0] if priv_row else 0
 
-        if is_private and ctx.author.id != member.id and not check_admin_or_owner_user(ctx.author):
+        is_admin = await check_admin_or_owner_user(ctx.author)
+        if is_private and ctx.author.id != member.id and not is_admin:
             await ctx.send("🔒 هذا العضو قام بقفل ملفه الشخصي ولا يمكن رؤية مستواه إلا للإدارة والمالك!")
             return
 
-        async with db.execute("SELECT xp, level FROM users WHERE user_id = ?", (member.id,)) as cursor:
+        async with db.execute("SELECT xp, level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
             row_text = await cursor.fetchone()
 
-        async with db.execute("SELECT voice_xp, voice_level FROM users WHERE user_id = ?", (member.id,)) as cursor:
+        async with db.execute("SELECT voice_xp, voice_level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
             row_voice = await cursor.fetchone()
 
-        async with db.execute("SELECT user_id FROM users ORDER BY level DESC, xp DESC") as cursor:
+        async with db.execute("SELECT user_id FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC", (guild_id,)) as cursor:
             all_text = await cursor.fetchall()
             text_rank = next((i for i, u in enumerate(all_text, 1) if u[0] == member.id), 1)
 
-        async with db.execute("SELECT user_id FROM users ORDER BY voice_level DESC, voice_xp DESC") as cursor:
+        async with db.execute("SELECT user_id FROM users WHERE guild_id = ? ORDER BY voice_level DESC, voice_xp DESC", (guild_id,)) as cursor:
             all_voice = await cursor.fetchall()
             voice_rank = next((i for i, u in enumerate(all_voice, 1) if u[0] == member.id), 1)
 
@@ -505,27 +626,29 @@ async def rank_command(ctx, member: discord.Member = None):
 
 @bot.command(name="privacy", aliases=["قفلي", "قفل", "خصوصية"])
 async def toggle_privacy(ctx):
+    guild_id = ctx.guild.id
     async with aiosqlite.connect("leveling.db") as db:
-        async with db.execute("SELECT is_private FROM users WHERE user_id = ?", (ctx.author.id,)) as cursor:
+        async with db.execute("SELECT is_private FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, ctx.author.id)) as cursor:
             row = await cursor.fetchone()
 
         current_status = row[0] if row else 0
         new_status = 1 if current_status == 0 else 0
 
         await db.execute("""
-            INSERT INTO users (user_id, is_private) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET is_private = excluded.is_private
-        """, (ctx.author.id, new_status))
+            INSERT INTO users (guild_id, user_id, is_private) VALUES (?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO UPDATE SET is_private = excluded.is_private
+        """, (guild_id, ctx.author.id, new_status))
         await db.commit()
 
     msg = "🔒 تم **قفل** بطاقتك التعرفية! لن يستطيع أحد رؤيتها غيرك والإدارة." if new_status else "🔓 تم **فتح** بطاقتك التعرفية للجميع!"
     await ctx.send(msg)
 
 async def top_command(ctx, time_frame: str = "all"):
+    guild_id = ctx.guild.id
     async with aiosqlite.connect("leveling.db") as db:
         if time_frame == "all":
             title = "🏆 قائمة المتصدرين (الكلي)"
-            async with db.execute("SELECT user_id, level, xp FROM users ORDER BY level DESC, xp DESC LIMIT 10") as cursor:
+            async with db.execute("SELECT user_id, level, xp FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 10", (guild_id,)) as cursor:
                 rows = await cursor.fetchall()
         else:
             now = datetime.utcnow()
@@ -542,11 +665,11 @@ async def top_command(ctx, time_frame: str = "all"):
             async with db.execute("""
                 SELECT user_id, SUM(amount) as total_xp 
                 FROM xp_logs 
-                WHERE timestamp >= ? 
+                WHERE guild_id = ? AND timestamp >= ? 
                 GROUP BY user_id 
                 ORDER BY total_xp DESC 
                 LIMIT 10
-            """, (start_time,)) as cursor:
+            """, (guild_id, start_time)) as cursor:
                 rows = await cursor.fetchall()
 
     if not rows:
