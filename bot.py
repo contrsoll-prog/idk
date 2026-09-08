@@ -104,6 +104,7 @@ def is_admin_or_owner():
 # --------------------------------------------------
 async def init_db():
     async with aiosqlite.connect("leveling.db") as db:
+        # إنشاء الجداول الأساسية
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -122,10 +123,17 @@ async def init_db():
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0")
-        except Exception:
-            pass
+
+        # فحص الأعمدة المفقودة وإضافتها آلياً لمنع أخطاء OperationalError
+        async with db.execute("PRAGMA table_info(users)") as cursor:
+            columns = [column[1] for column in await cursor.fetchall()]
+            if "voice_xp" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN voice_xp INTEGER DEFAULT 0")
+            if "voice_level" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN voice_level INTEGER DEFAULT 0")
+            if "is_private" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN is_private INTEGER DEFAULT 0")
+
         await db.commit()
 
 # حساب الـ XP المطلوب بقانون صعوبة متدرج ومنطقي
