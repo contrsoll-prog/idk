@@ -227,21 +227,28 @@ cooldowns = {}
 # --------------------------------------------------
 # 🎯 تقييد الأوامر والصلاحيات ديناميكياً لكل السيرفرات
 # --------------------------------------------------
-@bot.check
-async def restrict_commands_to_channel(ctx):
-    if not ctx.guild:
-        return True
+async def is_channel_allowed(ctx_or_message):
+    """دالة مساعدة للتحقق مما إذا كانت القناة الحالية مسموحاً بها"""
+    if not ctx_or_message.guild:
+        return True, None
 
     async with aiosqlite.connect("leveling.db") as db:
-        async with db.execute("SELECT cmd_channel_id FROM server_settings WHERE guild_id = ?", (ctx.guild.id,)) as cursor:
+        async with db.execute("SELECT cmd_channel_id FROM server_settings WHERE guild_id = ?", (ctx_or_message.guild.id,)) as cursor:
             row = await cursor.fetchone()
 
     if row and row[0]:
         allowed_channel_id = int(row[0])
-        if ctx.channel.id != allowed_channel_id:
-            raise commands.CheckFailure(
-                f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>"
-            )
+        if ctx_or_message.channel.id != allowed_channel_id:
+            return False, allowed_channel_id
+    return True, None
+
+@bot.check
+async def restrict_commands_to_channel(ctx):
+    allowed, allowed_channel_id = await is_channel_allowed(ctx)
+    if not allowed:
+        raise commands.CheckFailure(
+            f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>"
+        )
     return True
 
 async def check_admin_or_owner_user(member: discord.Member) -> bool:
@@ -477,7 +484,13 @@ async def on_message(message):
     parts = content_str.split()
     first_word = parts[0] if parts else ""
 
+    # 1. فحص اختصارات وأوامر الرانك (r)
     if first_word in ["r", "!r", "#r", ".r"]:
+        allowed, allowed_channel_id = await is_channel_allowed(message)
+        if not allowed:
+            await message.channel.send(f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>")
+            return
+
         target_member = message.author
         if len(message.mentions) > 0:
             target_member = message.mentions[0]
@@ -487,7 +500,13 @@ async def on_message(message):
         await rank_command(ctx, target_member)
         return
 
+    # 2. فحص اختصارات وأوامر التوب (t)
     if first_word in ["t", "!t", "#t", ".t", "top", "توب"]:
+        allowed, allowed_channel_id = await is_channel_allowed(message)
+        if not allowed:
+            await message.channel.send(f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>")
+            return
+
         period = "all"
         if len(parts) > 1:
             if parts[1] in ["daily", "يومي", "اليوم"]:
@@ -500,6 +519,7 @@ async def on_message(message):
         await top_command(ctx, period)
         return
 
+    # 3. احتساب خبرة الكتابة (XP)
     guild_id = message.guild.id
     user_id = message.author.id
     key = (guild_id, user_id)
