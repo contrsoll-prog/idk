@@ -121,6 +121,11 @@ DASHBOARD_HTML = """
 </html>
 """
 
+def get_db_connection():
+    conn = sqlite3.connect("leveling.db", timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 @app.route("/")
 def home():
     guild_id = request.args.get("guild_id")
@@ -129,8 +134,7 @@ def home():
     level_roles = []
 
     if guild_id and guild_id.isdigit():
-        conn = sqlite3.connect("leveling.db")
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute("SELECT * FROM server_settings WHERE guild_id = ?", (int(guild_id),))
@@ -151,7 +155,7 @@ def save_settings():
     level_channel_id = request.form.get("level_channel_id")
     admin_role_ids = request.form.get("admin_role_ids", "")
 
-    conn = sqlite3.connect("leveling.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO server_settings (guild_id, cmd_channel_id, level_channel_id, admin_role_ids)
@@ -172,7 +176,7 @@ def add_role():
     level = request.form.get("level")
     role_id = request.form.get("role_id")
 
-    conn = sqlite3.connect("leveling.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO server_roles (guild_id, level, role_id)
@@ -189,7 +193,7 @@ def delete_role():
     guild_id = request.form.get("guild_id")
     level = request.form.get("level")
 
-    conn = sqlite3.connect("leveling.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM server_roles WHERE guild_id = ? AND level = ?", (int(guild_id), int(level)))
     conn.commit()
@@ -202,7 +206,7 @@ def run():
     app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
-    Thread(target=run).start()
+    Thread(target=run, daemon=True).start()
 
 keep_alive()
 
@@ -214,8 +218,9 @@ intents.message_content = True
 intents.members = True
 intents.voice_states = True
 
+# تم إزالة البادئة الفارغة لمنع التعارضات في المعالجة
 bot = commands.Bot(
-    command_prefix=["!", "#", ".", ""], intents=intents, help_command=None
+    command_prefix=["!", "#", "."], intents=intents, help_command=None
 )
 
 COOLDOWN_TIME = 60
@@ -228,7 +233,6 @@ cooldowns = {}
 # 🎯 تقييد الأوامر والصلاحيات ديناميكياً لكل السيرفرات
 # --------------------------------------------------
 async def is_channel_allowed(ctx_or_message):
-    """دالة مساعدة للتحقق مما إذا كانت القناة الحالية مسموحاً بها"""
     if not ctx_or_message.guild:
         return True, None
 
@@ -272,6 +276,8 @@ async def check_admin_or_owner_user(member: discord.Member) -> bool:
 # --------------------------------------------------
 async def init_db():
     async with aiosqlite.connect("leveling.db") as db:
+        # تفعيل WAL mode لتجنب قفل قاعدة البيانات بين Flask و Discord Bot
+        await db.execute("PRAGMA journal_mode=WAL;")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS server_settings (
                 guild_id INTEGER PRIMARY KEY,
@@ -467,7 +473,8 @@ async def check_role_rewards(member: discord.Member, new_level: int):
 @bot.event
 async def on_ready():
     await init_db()
-    voice_xp_loop.start()
+    if not voice_xp_loop.is_running():
+        voice_xp_loop.start()
     print(f"✅ تم تشغيل البوت بنجاح باسم: {bot.user.name}")
 
 @bot.event
