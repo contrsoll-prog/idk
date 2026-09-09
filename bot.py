@@ -455,7 +455,7 @@ async def check_role_rewards(member: discord.Member, new_level: int):
     all_level_roles = [guild.get_role(r_id) for r_id in level_map.values() if guild.get_role(r_id)]
     target_role = guild.get_role(level_map[target_level]) if target_level else None
 
-    # سحب جميع رتب المستويات التي يملكها العضو باستثناء الرتبة المستحقة حالياً
+    # سحب جميع رتب المستويات السابقة التي لا يستحقها العضو
     roles_to_remove = [r for r in member.roles if r in all_level_roles and r != target_role]
     if roles_to_remove:
         try:
@@ -463,7 +463,7 @@ async def check_role_rewards(member: discord.Member, new_level: int):
         except Exception:
             pass
 
-    # إعطاء الرتبة المستحقة إذا لم تكن عنده بالفعل
+    # إعطاء الرتبة المستحقة للمستوى الحالي
     if target_role and target_role not in member.roles:
         try:
             await member.add_roles(target_role)
@@ -491,7 +491,7 @@ async def on_message(message):
     parts = content_str.split()
     first_word = parts[0] if parts else ""
 
-    # 0. فحص امر الأوامر
+    # 0. فحص أمر الأوامر
     if first_word in ["أوامر", "اوامر", "!أوامر", "!اوامر", "#أوامر", "#اوامر", ".أوامر", ".اوامر", "help", "!help", "#help", ".help"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
@@ -554,12 +554,14 @@ async def on_message(message):
                 await db.execute("INSERT INTO users (guild_id, user_id, xp, level) VALUES (?, ?, ?, ?)", (guild_id, user_id, xp, level))
             else:
                 xp, level = row[0] + XP_PER_MESSAGE, row[1]
-                needed_xp = get_needed_xp(level)
+                old_level = level
 
-                if xp >= needed_xp:
+                # حلقة while لحساب أي كمية ليفلات متراكمة
+                while xp >= get_needed_xp(level):
+                    xp -= get_needed_xp(level)
                     level += 1
-                    xp -= needed_xp
-                    
+
+                if level > old_level:
                     async with db.execute("SELECT level_channel_id FROM server_settings WHERE guild_id = ?", (guild_id,)) as cursor_lvl:
                         lvl_row = await cursor_lvl.fetchone()
                     
@@ -597,9 +599,12 @@ async def voice_xp_loop():
                         await db.execute("INSERT INTO users (guild_id, user_id, voice_xp, voice_level) VALUES (?, ?, ?, ?)", (guild.id, member.id, XP_PER_VOICE, 0))
                     else:
                         v_xp, v_level = (row[0] or 0) + XP_PER_VOICE, (row[1] or 0)
-                        if v_xp >= get_needed_xp(v_level):
-                            v_level += 1
+                        
+                        # حلقة while لليفل الصوتي
+                        while v_xp >= get_needed_xp(v_level):
                             v_xp -= get_needed_xp(v_level)
+                            v_level += 1
+
                         await db.execute("UPDATE users SET voice_xp = ?, voice_level = ? WHERE guild_id = ? AND user_id = ?", (v_xp, v_level, guild.id, member.id))
                     await db.commit()
 
@@ -784,7 +789,7 @@ async def top_command(ctx, time_frame: str = "all"):
     await ctx.send(embed=embed)
 
 # --------------------------------------------------
-# 🛡️ أوامر الإدارة لتعديل النقاط (محدثة لدعم الصوتي)
+# 🛡️ أوامر الإدارة لتعديل النقاط
 # --------------------------------------------------
 
 @bot.command(name="setlevel")
@@ -805,17 +810,16 @@ async def set_level_cmd(ctx, member: discord.Member, new_level: int, xp_type: st
             await db.execute("""
                 INSERT INTO users (guild_id, user_id, voice_level, voice_xp) 
                 VALUES (?, ?, ?, 0)
-                ON CONFLICT(guild_id, user_id) DO UPDATE SET voice_level = excluded.voice_level
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET voice_level = excluded.voice_level, voice_xp = 0
             """, (guild_id, member.id, new_level))
         else:
             await db.execute("""
                 INSERT INTO users (guild_id, user_id, level, xp) 
                 VALUES (?, ?, ?, 0)
-                ON CONFLICT(guild_id, user_id) DO UPDATE SET level = excluded.level
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET level = excluded.level, xp = 0
             """, (guild_id, member.id, new_level))
         await db.commit()
         
-    # إعطاء أو سحب الرتبة فوراً بمجرد استخدام الأمر (للمستوى الكتابي)
     if not is_voice:
         await check_role_rewards(member, new_level)
 
@@ -835,23 +839,44 @@ async def add_xp_cmd(ctx, member: discord.Member, amount: int, xp_type: str = "t
         if is_voice:
             async with db.execute("SELECT voice_xp, voice_level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
                 row = await cursor.fetchone()
+                
+            v_xp = (row[0] or 0) + amount if row else amount
+            v_level = row[1] if row else 0
+            
+            # حلقة بينما تحسب أي كمية XP مضافة للمستوى الصوتي
+            while v_xp >= get_needed_xp(v_level):
+                v_xp -= get_needed_xp(v_level)
+                v_level += 1
+                
             if not row:
-                await db.execute("INSERT INTO users (guild_id, user_id, voice_xp, voice_level) VALUES (?, ?, ?, 0)", (guild_id, member.id, amount))
+                await db.execute("INSERT INTO users (guild_id, user_id, voice_xp, voice_level) VALUES (?, ?, ?, ?)", (guild_id, member.id, v_xp, v_level))
             else:
-                new_xp = (row[0] or 0) + amount
-                await db.execute("UPDATE users SET voice_xp = ? WHERE guild_id = ? AND user_id = ?", (new_xp, guild_id, member.id))
+                await db.execute("UPDATE users SET voice_xp = ?, voice_level = ? WHERE guild_id = ? AND user_id = ?", (v_xp, v_level, guild_id, member.id))
         else:
             async with db.execute("SELECT xp, level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
                 row = await cursor.fetchone()
+                
+            xp = (row[0] or 0) + amount if row else amount
+            level = row[1] if row else 0
+            
+            # حلقة بينما تحسب أي كمية XP مضافة للمستوى الكتابي
+            while xp >= get_needed_xp(level):
+                xp -= get_needed_xp(level)
+                level += 1
+                
             if not row:
-                await db.execute("INSERT INTO users (guild_id, user_id, xp, level) VALUES (?, ?, ?, 0)", (guild_id, member.id, amount))
+                await db.execute("INSERT INTO users (guild_id, user_id, xp, level) VALUES (?, ?, ?, ?)", (guild_id, member.id, xp, level))
             else:
-                new_xp = (row[0] or 0) + amount
-                await db.execute("UPDATE users SET xp = ? WHERE guild_id = ? AND user_id = ?", (new_xp, guild_id, member.id))
+                await db.execute("UPDATE users SET xp = ?, level = ? WHERE guild_id = ? AND user_id = ?", (xp, level, guild_id, member.id))
         await db.commit()
         
+    # تحديث الرتب فوراً عند الزيادة
+    if not is_voice:
+        await check_role_rewards(member, level)
+        
     msg_type = "الصوتي 🎤" if is_voice else "الكتابي 💬"
-    await ctx.send(f"✅ تم إضافة **{amount} XP** {msg_type} لحساب {member.mention}.")
+    current_level = v_level if is_voice else level
+    await ctx.send(f"✅ تم إضافة **{amount} XP** {msg_type} لحساب {member.mention}. (وصل إلى Level **{current_level}**)")
 
 @bot.command(name="resetxp")
 async def reset_xp_cmd(ctx, member: discord.Member, xp_type: str = "all"):
@@ -870,15 +895,10 @@ async def reset_xp_cmd(ctx, member: discord.Member, xp_type: str = "all"):
         elif is_text:
             await db.execute("UPDATE users SET xp = 0, level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
             msg_type = "الكتابية 💬"
-            
-            # سحب الرتب لأن الليفل صار صفر
             await check_role_rewards(member, 0)
         else:
-            # إذا لم يكتب نوع أو كتب أي كلمة أخرى سيصفر الكل كحالة افتراضية
             await db.execute("UPDATE users SET xp = 0, level = 0, voice_xp = 0, voice_level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
             msg_type = "الكلية (الكتابية والصوتية) 🔄"
-            
-            # سحب الرتب لأن الليفل الكتابي صار صفر
             await check_role_rewards(member, 0)
             
         await db.commit()
