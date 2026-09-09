@@ -489,8 +489,18 @@ async def on_message(message):
     parts = content_str.split()
     first_word = parts[0] if parts else ""
 
-    # 1. فحص اختصارات وأوامر الرانك (r)
-    if first_word in ["r", "!r", "#r", ".r"]:
+    # 0. فحص امر الأوامر / اوامر / help
+    if first_word in ["أوامر", "اوامر", "!أوامر", "!اوامر", "#أوامر", "#اوامر", ".أوامر", ".اوامر", "help", "!help", "#help", ".help"]:
+        allowed, allowed_channel_id = await is_channel_allowed(message)
+        if not allowed:
+            await message.channel.send(f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>")
+            return
+        ctx = await bot.get_context(message)
+        await help_command(ctx)
+        return
+
+    # 1. فحص اختصارات وأوامر الرانك (r / rank)
+    if first_word in ["r", "!r", "#r", ".r", "rank", "!rank", "#rank", ".rank", "رانك"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
             await message.channel.send(f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>")
@@ -505,8 +515,8 @@ async def on_message(message):
         await rank_command(ctx, target_member)
         return
 
-    # 2. فحص اختصارات وأوامر التوب (t)
-    if first_word in ["t", "!t", "#t", ".t", "top", "توب"]:
+    # 2. فحص اختصارات وأوامر التوب (t / top)
+    if first_word in ["t", "!t", "#t", ".t", "top", "!top", "#top", ".top", "توب"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
             await message.channel.send(f"⚠️ جميع أوامر البوت تعمل فقط في الروم المخصص: <#{allowed_channel_id}>")
@@ -514,11 +524,12 @@ async def on_message(message):
 
         period = "all"
         if len(parts) > 1:
-            if parts[1] in ["daily", "يومي", "اليوم"]:
+            arg = parts[1].lower()
+            if arg in ["day", "daily", "يومي", "اليوم"]:
                 period = "daily"
-            elif parts[1] in ["weekly", "اسبوعي", "أسبوعي", "الأسبوع"]:
+            elif arg in ["week", "weekly", "اسبوعي", "أسبوعي", "الأسبوع"]:
                 period = "weekly"
-            elif parts[1] in ["monthly", "شهري", "الشهر"]:
+            elif arg in ["month", "monthly", "شهري", "الشهر"]:
                 period = "monthly"
         ctx = await bot.get_context(message)
         await top_command(ctx, period)
@@ -592,6 +603,42 @@ async def voice_xp_loop():
 
                 await log_xp_gain(guild.id, member.id, XP_PER_VOICE)
 
+# --------------------------------------------------
+# 📖 أمر الأوامر (Help Command)
+# --------------------------------------------------
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="🤖 قائمة أوامر البوت",
+        description="إليك جميع الأوامر المتاحة لاستخدامها داخل البوت:",
+        color=discord.Color.from_rgb(88, 101, 242)
+    )
+    
+    embed.add_field(
+        name="👥 أوامر الأعضاء العامة",
+        value=(
+            "• `r` / `rank` : عرض بطاقة المستويات الخاصة بك (الكتابية والصوتية).\n"
+            "• `r @member` : عرض بطاقة مستوى عضو آخر.\n"
+            "• `t` / `top` : عرض قائمة المتصدرين الكلية (الكتابي + الصوتي).\n"
+            "• `t day` : عرض المتصدرين لليوم الحالي.\n"
+            "• `t week` : عرض المتصدرين للأسبوع الحالي.\n"
+            "• `t month` : عرض المتصدرين للشهر الحالي.\n"
+            "• `privacy` / `قفل` : إخفاء/إظهار ملفك الشخصي عن باقي الأعضاء."
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ أوامر وتحكم لوحة التحكم (Dashboard)",
+        value=(
+            "• **إعداد الرومات والرتب الأدمن**: (خاص بـ **المالك / Owner** أو **رتب الإدارة المعتمدة** عبر اللوحة Web)\n"
+            "• **إضافة جوائز المستويات**: (خاص بـ **المالك / Owner** أو **رتب الإدارة** عبر اللوحة Web)"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="💡 تنبيه: بعض الأوامر أو الملفات المغلقة لا يمكن الاطلاع عليها إلا لـ مالك السيرفر ورتب الإدارة.")
+    await ctx.send(embed=embed)
+
 async def rank_command(ctx, member: discord.Member = None):
     member = member or ctx.author
     guild_id = ctx.guild.id
@@ -663,9 +710,41 @@ async def top_command(ctx, time_frame: str = "all"):
     guild_id = ctx.guild.id
     async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
         if time_frame == "all":
-            title = "🏆 قائمة المتصدرين (الكلي)"
-            async with db.execute("SELECT user_id, level, xp FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 10", (guild_id,)) as cursor:
-                rows = await cursor.fetchall()
+            embed = discord.Embed(title="🏆 قائمة المتصدرين (الكلي)", color=discord.Color.from_rgb(108, 63, 196))
+            
+            # المتصدرون بالكتابة
+            async with db.execute("SELECT user_id, level, xp FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 5", (guild_id,)) as cursor:
+                text_rows = await cursor.fetchall()
+
+            # المتصدرون بالصوت
+            async with db.execute("SELECT user_id, voice_level, voice_xp FROM users WHERE guild_id = ? ORDER BY voice_level DESC, voice_xp DESC LIMIT 5", (guild_id,)) as cursor:
+                voice_rows = await cursor.fetchall()
+
+            text_desc = ""
+            if text_rows:
+                for idx, row in enumerate(text_rows, 1):
+                    member = ctx.guild.get_member(row[0])
+                    name = member.display_name if member else f"عضو مغادر ({row[0]})"
+                    medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"`#{idx}`"
+                    text_desc += f"{medal} **{name}** — Level `{row[1]}` | `{format_number(row[2])} XP`\n"
+            else:
+                text_desc = "لا يوجد بيانات حتى الآن."
+
+            voice_desc = ""
+            if voice_rows:
+                for idx, row in enumerate(voice_rows, 1):
+                    member = ctx.guild.get_member(row[0])
+                    name = member.display_name if member else f"عضو مغادر ({row[0]})"
+                    medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"`#{idx}`"
+                    voice_desc += f"{medal} **{name}** — Voice Level `{row[1]}` | `{format_number(row[2])} XP`\n"
+            else:
+                voice_desc = "لا يوجد بيانات حتى الآن."
+
+            embed.add_field(name="💬 المتصدرون في الشات (الكتابي)", value=text_desc, inline=False)
+            embed.add_field(name="🎤 المتصدرون في الرومات (الصوتي)", value=voice_desc, inline=False)
+            await ctx.send(embed=embed)
+            return
+
         else:
             now = datetime.now(timezone.utc)
             if time_frame == "daily":
@@ -700,13 +779,8 @@ async def top_command(ctx, time_frame: str = "all"):
         member = ctx.guild.get_member(user_id)
         name = member.display_name if member else f"عضو مغادر ({user_id})"
         medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"`#{idx}`"
-
-        if time_frame == "all":
-            level, xp = row[1], row[2]
-            description += f"{medal} **{name}** — Level `{level}` | `{format_number(xp)} XP`\n"
-        else:
-            gained_xp = row[1]
-            description += f"{medal} **{name}** — مكتسب: `{format_number(gained_xp)} XP`\n"
+        gained_xp = row[1]
+        description += f"{medal} **{name}** — مكتسب: `{format_number(gained_xp)} XP`\n"
 
     embed.description = description
     await ctx.send(embed=embed)
