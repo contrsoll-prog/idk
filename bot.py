@@ -229,7 +229,7 @@ XP_PER_VOICE = 10
 cooldowns = {}
 
 # --------------------------------------------------
-# 🎯 تقييد الأوامر والصلاحيات ديناميكياً لكل السيرفرات
+# 🎯 تقييد الأوامر والصلاحيات
 # --------------------------------------------------
 async def is_channel_allowed(ctx_or_message):
     if not ctx_or_message.guild:
@@ -489,7 +489,7 @@ async def on_message(message):
     parts = content_str.split()
     first_word = parts[0] if parts else ""
 
-    # 0. فحص امر الأوامر / اوامر / help
+    # 0. فحص امر الأوامر
     if first_word in ["أوامر", "اوامر", "!أوامر", "!اوامر", "#أوامر", "#اوامر", ".أوامر", ".اوامر", "help", "!help", "#help", ".help"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
@@ -499,7 +499,7 @@ async def on_message(message):
         await help_command(ctx)
         return
 
-    # 1. فحص اختصارات وأوامر الرانك (r / rank)
+    # 1. فحص اختصارات الرانك
     if first_word in ["r", "!r", "#r", ".r", "rank", "!rank", "#rank", ".rank", "رانك"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
@@ -515,7 +515,7 @@ async def on_message(message):
         await rank_command(ctx, target_member)
         return
 
-    # 2. فحص اختصارات وأوامر التوب (t / top)
+    # 2. فحص اختصارات التوب
     if first_word in ["t", "!t", "#t", ".t", "top", "!top", "#top", ".top", "توب"]:
         allowed, allowed_channel_id = await is_channel_allowed(message)
         if not allowed:
@@ -535,7 +535,7 @@ async def on_message(message):
         await top_command(ctx, period)
         return
 
-    # 3. احتساب خبرة الكتابة (XP)
+    # 3. احتساب خبرة الكتابة
     guild_id = message.guild.id
     user_id = message.author.id
     key = (guild_id, user_id)
@@ -604,7 +604,7 @@ async def voice_xp_loop():
                 await log_xp_gain(guild.id, member.id, XP_PER_VOICE)
 
 # --------------------------------------------------
-# 📖 أمر الأوامر (Help Command)
+# 📖 أوامر البوت (Help)
 # --------------------------------------------------
 async def help_command(ctx):
     embed = discord.Embed(
@@ -616,27 +616,25 @@ async def help_command(ctx):
     embed.add_field(
         name="👥 أوامر الأعضاء العامة",
         value=(
-            "• `r` / `rank` : عرض بطاقة المستويات الخاصة بك (الكتابية والصوتية).\n"
-            "• `r @member` : عرض بطاقة مستوى عضو آخر.\n"
-            "• `t` / `top` : عرض قائمة المتصدرين الكلية (الكتابي + الصوتي).\n"
-            "• `t day` : عرض المتصدرين لليوم الحالي.\n"
-            "• `t week` : عرض المتصدرين للأسبوع الحالي.\n"
-            "• `t month` : عرض المتصدرين للشهر الحالي.\n"
-            "• `privacy` / `قفل` : إخفاء/إظهار ملفك الشخصي عن باقي الأعضاء."
+            "• `r` / `rank` : عرض بطاقة المستويات الخاصة بك.\n"
+            "• `t` / `top` : عرض قائمة المتصدرين (شات وصوت).\n"
+            "• `t day` / `week` / `month` : المتصدرين لفترة معينة.\n"
+            "• `privacy` / `قفل` : إخفاء/إظهار ملفك الشخصي."
         ),
         inline=False
     )
-    
+
     embed.add_field(
-        name="⚙️ أوامر وتحكم لوحة التحكم (Dashboard)",
+        name="🛡️ أوامر الإدارة الخاصة (المالك والآدمن)",
         value=(
-            "• **إعداد الرومات والرتب الأدمن**: (خاص بـ **المالك / Owner** أو **رتب الإدارة المعتمدة** عبر اللوحة Web)\n"
-            "• **إضافة جوائز المستويات**: (خاص بـ **المالك / Owner** أو **رتب الإدارة** عبر اللوحة Web)"
+            "• `!setlevel @user <level> [voice/صوتي]` : تحديد مستوى معين (الافتراضي: كتابي).\n"
+            "• `!addxp @user <amount> [voice/صوتي]` : إضافة نقاط (الافتراضي: كتابي).\n"
+            "• `!resetxp @user [كتابي/صوتي]` : تصفير نقاط ومستوى عضو (الافتراضي: تصفير الكل)."
         ),
         inline=False
     )
     
-    embed.set_footer(text="💡 تنبيه: بعض الأوامر أو الملفات المغلقة لا يمكن الاطلاع عليها إلا لـ مالك السيرفر ورتب الإدارة.")
+    embed.set_footer(text="💡 تنبيه: الأوامر الإدارية يمكن فقط للإدارة استخدامها.")
     await ctx.send(embed=embed)
 
 async def rank_command(ctx, member: discord.Member = None):
@@ -712,11 +710,9 @@ async def top_command(ctx, time_frame: str = "all"):
         if time_frame == "all":
             embed = discord.Embed(title="🏆 قائمة المتصدرين (الكلي)", color=discord.Color.from_rgb(108, 63, 196))
             
-            # المتصدرون بالكتابة
             async with db.execute("SELECT user_id, level, xp FROM users WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 5", (guild_id,)) as cursor:
                 text_rows = await cursor.fetchall()
 
-            # المتصدرون بالصوت
             async with db.execute("SELECT user_id, voice_level, voice_xp FROM users WHERE guild_id = ? ORDER BY voice_level DESC, voice_xp DESC LIMIT 5", (guild_id,)) as cursor:
                 voice_rows = await cursor.fetchall()
 
@@ -784,6 +780,98 @@ async def top_command(ctx, time_frame: str = "all"):
 
     embed.description = description
     await ctx.send(embed=embed)
+
+# --------------------------------------------------
+# 🛡️ أوامر الإدارة لتعديل النقاط (محدثة لدعم الصوتي)
+# --------------------------------------------------
+
+@bot.command(name="setlevel")
+async def set_level_cmd(ctx, member: discord.Member, new_level: int, xp_type: str = "text"):
+    if not await check_admin_or_owner_user(ctx.author):
+        await ctx.send("❌ **هذا الأمر مخصص لمالك السيرفر والإدارة فقط.**")
+        return
+        
+    if new_level < 0:
+        await ctx.send("⚠️ لا يمكن أن يكون المستوى أقل من صفر.")
+        return
+        
+    guild_id = ctx.guild.id
+    is_voice = xp_type.lower() in ["voice", "صوتي"]
+
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
+        if is_voice:
+            await db.execute("""
+                INSERT INTO users (guild_id, user_id, voice_level, voice_xp) 
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET voice_level = excluded.voice_level
+            """, (guild_id, member.id, new_level))
+        else:
+            await db.execute("""
+                INSERT INTO users (guild_id, user_id, level, xp) 
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET level = excluded.level
+            """, (guild_id, member.id, new_level))
+        await db.commit()
+        
+    msg_type = "الصوتي 🎤" if is_voice else "الكتابي 💬"
+    await ctx.send(f"✅ تم تعديل مستوى {member.mention} **{msg_type}** إلى Level **{new_level}** بنجاح.")
+
+@bot.command(name="addxp")
+async def add_xp_cmd(ctx, member: discord.Member, amount: int, xp_type: str = "text"):
+    if not await check_admin_or_owner_user(ctx.author):
+        await ctx.send("❌ **هذا الأمر مخصص لمالك السيرفر والإدارة فقط.**")
+        return
+        
+    guild_id = ctx.guild.id
+    is_voice = xp_type.lower() in ["voice", "صوتي"]
+
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
+        if is_voice:
+            async with db.execute("SELECT voice_xp, voice_level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                await db.execute("INSERT INTO users (guild_id, user_id, voice_xp, voice_level) VALUES (?, ?, ?, 0)", (guild_id, member.id, amount))
+            else:
+                new_xp = (row[0] or 0) + amount
+                await db.execute("UPDATE users SET voice_xp = ? WHERE guild_id = ? AND user_id = ?", (new_xp, guild_id, member.id))
+        else:
+            async with db.execute("SELECT xp, level FROM users WHERE guild_id = ? AND user_id = ?", (guild_id, member.id)) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                await db.execute("INSERT INTO users (guild_id, user_id, xp, level) VALUES (?, ?, ?, 0)", (guild_id, member.id, amount))
+            else:
+                new_xp = (row[0] or 0) + amount
+                await db.execute("UPDATE users SET xp = ? WHERE guild_id = ? AND user_id = ?", (new_xp, guild_id, member.id))
+        await db.commit()
+        
+    msg_type = "الصوتي 🎤" if is_voice else "الكتابي 💬"
+    await ctx.send(f"✅ تم إضافة **{amount} XP** {msg_type} لحساب {member.mention}.")
+
+@bot.command(name="resetxp")
+async def reset_xp_cmd(ctx, member: discord.Member, xp_type: str = "all"):
+    if not await check_admin_or_owner_user(ctx.author):
+        await ctx.send("❌ **هذا الأمر مخصص لمالك السيرفر والإدارة فقط.**")
+        return
+        
+    guild_id = ctx.guild.id
+    is_voice = xp_type.lower() in ["voice", "صوتي"]
+    is_text = xp_type.lower() in ["text", "كتابي"]
+
+    async with aiosqlite.connect("leveling.db", timeout=20.0) as db:
+        if is_voice:
+            await db.execute("UPDATE users SET voice_xp = 0, voice_level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
+            msg_type = "الصوتية 🎤"
+        elif is_text:
+            await db.execute("UPDATE users SET xp = 0, level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
+            msg_type = "الكتابية 💬"
+        else:
+            # إذا لم يكتب نوع أو كتب أي كلمة أخرى سيصفر الكل كحالة افتراضية
+            await db.execute("UPDATE users SET xp = 0, level = 0, voice_xp = 0, voice_level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
+            msg_type = "الكلية (الكتابية والصوتية) 🔄"
+            
+        await db.commit()
+        
+    await ctx.send(f"✅ تم تصفير نقاط ومستويات {member.mention} **{msg_type}** بنجاح.")
 
 token = os.environ.get("DISCORD_TOKEN")
 if token:
