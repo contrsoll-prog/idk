@@ -455,6 +455,7 @@ async def check_role_rewards(member: discord.Member, new_level: int):
     all_level_roles = [guild.get_role(r_id) for r_id in level_map.values() if guild.get_role(r_id)]
     target_role = guild.get_role(level_map[target_level]) if target_level else None
 
+    # سحب جميع رتب المستويات التي يملكها العضو باستثناء الرتبة المستحقة حالياً
     roles_to_remove = [r for r in member.roles if r in all_level_roles and r != target_role]
     if roles_to_remove:
         try:
@@ -462,6 +463,7 @@ async def check_role_rewards(member: discord.Member, new_level: int):
         except Exception:
             pass
 
+    # إعطاء الرتبة المستحقة إذا لم تكن عنده بالفعل
     if target_role and target_role not in member.roles:
         try:
             await member.add_roles(target_role)
@@ -813,8 +815,12 @@ async def set_level_cmd(ctx, member: discord.Member, new_level: int, xp_type: st
             """, (guild_id, member.id, new_level))
         await db.commit()
         
+    # إعطاء أو سحب الرتبة فوراً بمجرد استخدام الأمر (للمستوى الكتابي)
+    if not is_voice:
+        await check_role_rewards(member, new_level)
+
     msg_type = "الصوتي 🎤" if is_voice else "الكتابي 💬"
-    await ctx.send(f"✅ تم تعديل مستوى {member.mention} **{msg_type}** إلى Level **{new_level}** بنجاح.")
+    await ctx.send(f"✅ تم تعديل مستوى {member.mention} **{msg_type}** إلى Level **{new_level}** بنجاح، وتم تحديث رتبته! 🎖️")
 
 @bot.command(name="addxp")
 async def add_xp_cmd(ctx, member: discord.Member, amount: int, xp_type: str = "text"):
@@ -864,14 +870,20 @@ async def reset_xp_cmd(ctx, member: discord.Member, xp_type: str = "all"):
         elif is_text:
             await db.execute("UPDATE users SET xp = 0, level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
             msg_type = "الكتابية 💬"
+            
+            # سحب الرتب لأن الليفل صار صفر
+            await check_role_rewards(member, 0)
         else:
             # إذا لم يكتب نوع أو كتب أي كلمة أخرى سيصفر الكل كحالة افتراضية
             await db.execute("UPDATE users SET xp = 0, level = 0, voice_xp = 0, voice_level = 0 WHERE guild_id = ? AND user_id = ?", (guild_id, member.id))
             msg_type = "الكلية (الكتابية والصوتية) 🔄"
             
+            # سحب الرتب لأن الليفل الكتابي صار صفر
+            await check_role_rewards(member, 0)
+            
         await db.commit()
         
-    await ctx.send(f"✅ تم تصفير نقاط ومستويات {member.mention} **{msg_type}** بنجاح.")
+    await ctx.send(f"✅ تم تصفير نقاط ومستويات {member.mention} **{msg_type}** بنجاح وتم تحديث الرتب.")
 
 token = os.environ.get("DISCORD_TOKEN")
 if token:
