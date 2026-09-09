@@ -399,8 +399,9 @@ async def generate_dual_rank_card(
     draw.text((275, 95), "LVL", fill=(180, 180, 210, 255), font=font_small)
     draw.text((275, 120), str(text_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    draw.rounded_rectangle([(345, 120), (385, 150)], radius=6, fill=(255, 255, 255, 255))
-    draw.polygon([(350, 150), (350, 162), (362, 150)], fill=(255, 255, 255, 255))
+    # تم إزاحة أيقونة الشات لليمين (x=395 بدلاً من 345)
+    draw.rounded_rectangle([(395, 120), (435, 150)], radius=6, fill=(255, 255, 255, 255))
+    draw.polygon([(400, 150), (400, 162), (412, 150)], fill=(255, 255, 255, 255))
 
     draw.text((450, 95), f"Rank: #{text_rank}", fill=(230, 230, 245, 255), font=font_sub)
     draw.text((700, 95), f"Total: {format_number(text_total)}", fill=(230, 230, 245, 255), font=font_sub)
@@ -415,9 +416,10 @@ async def generate_dual_rank_card(
     draw.text((275, 215), "LVL", fill=(180, 180, 210, 255), font=font_small)
     draw.text((275, 240), str(voice_lvl), fill=(255, 255, 255, 255), font=font_lvl)
 
-    draw.rounded_rectangle([(357, 235), (373, 262)], radius=7, fill=(255, 255, 255, 255))
-    draw.arc([(350, 245), (380, 268)], start=0, end=180, fill=(255, 255, 255, 255), width=3)
-    draw.line([(365, 268), (365, 276)], fill=(255, 255, 255, 255), width=3)
+    # تم إزاحة أيقونة المايك لليمين (x=407 بدلاً من 357)
+    draw.rounded_rectangle([(407, 235), (423, 262)], radius=7, fill=(255, 255, 255, 255))
+    draw.arc([(400, 245), (430, 268)], start=0, end=180, fill=(255, 255, 255, 255), width=3)
+    draw.line([(415, 268), (415, 276)], fill=(255, 255, 255, 255), width=3)
 
     draw.text((450, 215), f"Rank: #{voice_rank}", fill=(230, 230, 245, 255), font=font_sub)
     draw.text((700, 215), f"Total: {format_number(voice_total)}", fill=(230, 230, 245, 255), font=font_sub)
